@@ -13,13 +13,18 @@ class VolumeScanner:
         self.base_url = "https://api.bithumb.com"
         self.previous_volumes = {}  # 이전 거래량 저장
 
-        # 모니터링할 주요 코인 (빗썸 TOP 코인들)
-        self.coins = [
-            'BTC', 'ETH', 'XRP', 'ADA', 'DOT',
-            'DOGE', 'MATIC', 'SOL', 'AVAX', 'LINK',
-            'TRX', 'ETC', 'BCH', 'LTC', 'XLM',
-            'ATOM', 'SAND', 'MANA', 'AXS', 'CHZ'
+        # 제외할 코인 (스테이블코인 + 시총 100위 안 메이저 코인들)
+        self.excluded_coins = [
+            # 스테이블코인
+            'USDT', 'USDC', 'BUSD', 'DAI', 'TUSD', 'FDUSD',
+            # 시총 100위 메이저 코인
+            'BTC', 'ETH', 'BNB', 'XRP', 'SOL', 'ADA', 'DOGE',
+            'TRX', 'TON', 'LINK', 'AVAX', 'MATIC', 'DOT', 'UNI',
+            'LTC', 'BCH', 'ATOM', 'XLM', 'ETC', 'HBAR', 'ICP'
         ]
+
+        # 빈 리스트 (전체 코인에서 제외할 코인만 필터링)
+        self.coins = []
 
     def get_all_tickers(self) -> Optional[Dict]:
         """전체 코인의 현재 시세 조회"""
@@ -51,6 +56,77 @@ class VolumeScanner:
         self.previous_volumes[coin] = current_volume
 
         return change_rate
+
+    def scan_altcoin_volume_surge(self, min_surge_rate: float = 20.0, min_trade_value: float = 30000000) -> List[Dict]:
+        """
+        잡알트코인 거래량 급증 스캔 (스테이블코인, 시총100위 제외)
+
+        Args:
+            min_surge_rate: 최소 거래량 증가율 (%)
+            min_trade_value: 최소 거래대금 (원)
+
+        Returns:
+            급증한 잡알트코인 리스트
+        """
+        try:
+            all_data = self.get_all_tickers()
+            if not all_data:
+                return []
+
+            surge_coins = []
+
+            # 전체 코인에서 제외 목록만 빼기
+            scan_coins = [coin for coin in all_data.keys() if coin not in self.excluded_coins and coin != 'date']
+
+            for coin in scan_coins:
+                if coin not in all_data:
+                    continue
+
+                coin_data = all_data[coin]
+
+                try:
+                    volume_24h = float(coin_data.get('units_traded_24H', 0))
+                    price = float(coin_data.get('closing_price', 0))
+                    price_change = float(coin_data.get('fluctate_rate_24H', 0))
+                    trade_value_24h = float(coin_data.get('acc_trade_value_24H', 0))
+
+                    # 최소 거래대금 필터
+                    if trade_value_24h < min_trade_value:
+                        continue
+
+                    # 최소 거래량 필터
+                    if volume_24h < 100:
+                        continue
+
+                    # 거래량 변화율 계산
+                    volume_change = self.calculate_volume_change(coin, volume_24h)
+
+                    # 초기 실행 시에는 건너뛰기
+                    if volume_change is None:
+                        continue
+
+                    # 거래량이 급증한 경우
+                    if volume_change >= min_surge_rate:
+                        surge_coins.append({
+                            'coin': coin,
+                            'price': price,
+                            'volume_24h': volume_24h,
+                            'volume_change': volume_change,
+                            'price_change_24h': price_change,
+                            'trade_value_24h': trade_value_24h
+                        })
+
+                except (ValueError, TypeError):
+                    continue
+
+            # 거래량 증가율 순으로 정렬
+            surge_coins.sort(key=lambda x: x['volume_change'], reverse=True)
+
+            return surge_coins
+
+        except Exception as e:
+            print(f"거래량 스캔 오류: {str(e)}")
+            return []
 
     def scan_volume_surge(self, min_surge_rate: float = 20.0) -> List[Dict]:
         """
@@ -114,10 +190,14 @@ class VolumeScanner:
             print(f"거래량 스캔 오류: {str(e)}")
             return []
 
-    def get_top_momentum_coins(self, top_n: int = 5) -> List[Dict]:
+    def get_top_momentum_coins(self, top_n: int = 5, altcoin_only: bool = False) -> List[Dict]:
         """
         모멘텀 상위 코인 조회
         거래량 증가 + 가격 상승을 종합 평가
+
+        Args:
+            top_n: 상위 N개 코인
+            altcoin_only: True이면 잡알트만 (스테이블코인, 시총100위 제외)
 
         Returns:
             상위 N개 코인 정보
@@ -129,7 +209,14 @@ class VolumeScanner:
 
             momentum_coins = []
 
-            for coin in self.coins:
+            # 스캔할 코인 리스트 결정
+            if altcoin_only or not self.coins:
+                # 전체 코인에서 제외 목록만 빼기
+                scan_coins = [coin for coin in all_data.keys() if coin not in self.excluded_coins and coin != 'date']
+            else:
+                scan_coins = self.coins
+
+            for coin in scan_coins:
                 if coin not in all_data:
                     continue
 
@@ -169,6 +256,25 @@ class VolumeScanner:
         except Exception as e:
             print(f"모멘텀 조회 오류: {str(e)}")
             return []
+
+    def print_altcoin_surge_report(self, surge_coins: List[Dict]):
+        """잡알트 거래량 급증 리포트 출력"""
+        if not surge_coins:
+            print("거래량 급증 잡알트 없음")
+            return
+
+        print("\n" + "="*80)
+        print("🚀 잡알트 거래량 급증 코인 발견! (스테이블코인, 시총100위 제외)")
+        print("="*80)
+
+        for i, coin_info in enumerate(surge_coins, 1):
+            print(f"\n[{i}] {coin_info['coin']}")
+            print(f"    현재가: {coin_info['price']:,} KRW")
+            print(f"    24시간 가격 변동: {coin_info['price_change_24h']:+.2f}%")
+            print(f"    거래량 증가율: {coin_info['volume_change']:+.2f}%")
+            print(f"    24시간 거래대금: {coin_info['trade_value_24h']/100000000:,.0f}억원")
+
+        print("="*80)
 
     def print_surge_report(self, surge_coins: List[Dict]):
         """거래량 급증 리포트 출력"""

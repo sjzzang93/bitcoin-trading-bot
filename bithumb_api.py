@@ -3,6 +3,7 @@ import time
 import hmac
 import hashlib
 import urllib.parse
+import base64
 from typing import Dict, Optional
 
 
@@ -12,17 +13,34 @@ class BithumbAPI:
         self.secret_key = secret_key
         self.base_url = "https://api.bithumb.com"
 
+    def _usec_time(self):
+        """마이크로초 단위 타임스탬프 생성"""
+        mt = time.time()
+        mt_array = str(mt).split(".")
+        return mt_array[0] + mt_array[1][:3]
+
     def _get_signature(self, endpoint: str, params: Dict) -> tuple:
         """API 요청 서명 생성"""
-        nonce = str(int(time.time() * 1000))
-        params_str = urllib.parse.urlencode(params)
+        # endpoint를 params에 추가
+        endpoint_item_array = {"endpoint": endpoint}
+        uri_array = dict(endpoint_item_array, **params)
 
-        payload = endpoint + chr(0) + params_str + chr(0) + nonce
-        signature = hmac.new(
-            self.secret_key.encode('utf-8'),
-            payload.encode('utf-8'),
-            hashlib.sha512
-        ).hexdigest()
+        params_str = urllib.parse.urlencode(uri_array)
+        nonce = self._usec_time()
+
+        # 서명 데이터 생성: endpoint + chr(0) + params + chr(0) + nonce
+        data = endpoint + chr(0) + params_str + chr(0) + nonce
+        utf8_data = data.encode('utf-8')
+        utf8_key = self.secret_key.encode('utf-8')
+
+        # HMAC-SHA512 해시 생성
+        h = hmac.new(bytes(utf8_key), utf8_data, hashlib.sha512)
+        hex_output = h.hexdigest()
+        utf8_hex_output = hex_output.encode('utf-8')
+
+        # Base64 인코딩 (중요!)
+        api_sign = base64.b64encode(utf8_hex_output)
+        signature = api_sign.decode('utf-8')
 
         return signature, nonce
 
@@ -70,6 +88,8 @@ class BithumbAPI:
             signature, nonce = self._get_signature(endpoint, params)
 
             headers = {
+                "Accept": "application/json",
+                "Content-Type": "application/x-www-form-urlencoded",
                 "Api-Key": self.api_key,
                 "Api-Sign": signature,
                 "Api-Nonce": nonce
@@ -112,6 +132,8 @@ class BithumbAPI:
             signature, nonce = self._get_signature(endpoint, params)
 
             headers = {
+                "Accept": "application/json",
+                "Content-Type": "application/x-www-form-urlencoded",
                 "Api-Key": self.api_key,
                 "Api-Sign": signature,
                 "Api-Nonce": nonce
@@ -145,6 +167,8 @@ class BithumbAPI:
             signature, nonce = self._get_signature(endpoint, params)
 
             headers = {
+                "Accept": "application/json",
+                "Content-Type": "application/x-www-form-urlencoded",
                 "Api-Key": self.api_key,
                 "Api-Sign": signature,
                 "Api-Nonce": nonce
@@ -178,6 +202,8 @@ class BithumbAPI:
             signature, nonce = self._get_signature(endpoint, params)
 
             headers = {
+                "Accept": "application/json",
+                "Content-Type": "application/x-www-form-urlencoded",
                 "Api-Key": self.api_key,
                 "Api-Sign": signature,
                 "Api-Nonce": nonce
